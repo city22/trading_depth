@@ -119,7 +119,7 @@ const EXCHANGE_WS = {
       }));
 
       ws.onmessage = (ev) => {
-        if (ev.data === 'pong') return;
+        if (ev.data === 'pong') { trackPong(exId); return; }
         let d; try { d = JSON.parse(ev.data); } catch { return; }
         if (!d.arg || !d.data) return;
 
@@ -152,7 +152,10 @@ const EXCHANGE_WS = {
       };
 
       const pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+        if (ws.readyState === WebSocket.OPEN) {
+          exRaw[exId].pingTs = Date.now();
+          ws.send('ping');
+        }
       }, 25000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
 
@@ -172,6 +175,7 @@ const EXCHANGE_WS = {
 
       ws.onmessage = (ev) => {
         let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.op === 'pong' || d.ret_msg === 'pong') { trackPong(exId); return; }
         if (!d.topic) return;
 
         if (d.topic.startsWith('orderbook')) {
@@ -204,7 +208,10 @@ const EXCHANGE_WS = {
       };
 
       const pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ op: 'ping' }));
+        if (ws.readyState === WebSocket.OPEN) {
+          exRaw[exId].pingTs = Date.now();
+          ws.send(JSON.stringify({ op: 'ping' }));
+        }
       }, 20000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
 
@@ -258,6 +265,7 @@ const EXCHANGE_WS = {
 
       ws.onmessage = (ev) => {
         let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.msg === 'PONG') { trackPong(exId); return; }
         const c = d.c || '';
         if (c.includes('depth')) {
           const bids = {}, asks = {};
@@ -277,7 +285,10 @@ const EXCHANGE_WS = {
       };
 
       const pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ method: 'PING' }));
+        if (ws.readyState === WebSocket.OPEN) {
+          exRaw[exId].pingTs = Date.now();
+          ws.send(JSON.stringify({ method: 'PING' }));
+        }
       }, 20000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
 
@@ -349,7 +360,7 @@ const EXCHANGE_WS = {
       }));
 
       ws.onmessage = (ev) => {
-        if (ev.data === 'pong') return;
+        if (ev.data === 'pong') { trackPong(exId); return; }
         let d; try { d = JSON.parse(ev.data); } catch { return; }
         const ch = d.arg?.channel;
 
@@ -382,7 +393,10 @@ const EXCHANGE_WS = {
       };
 
       const pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+        if (ws.readyState === WebSocket.OPEN) {
+          exRaw[exId].pingTs = Date.now();
+          ws.send('ping');
+        }
       }, 20000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
 
@@ -405,6 +419,7 @@ const EXCHANGE_WS = {
 
       ws.onmessage = (ev) => {
         let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.method === 'pong') { trackPong(exId); return; }
 
         if (d.channel === 'book') {
           if (d.type === 'snapshot') {
@@ -434,7 +449,10 @@ const EXCHANGE_WS = {
       };
 
       const pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ method: 'ping' }));
+        if (ws.readyState === WebSocket.OPEN) {
+          exRaw[exId].pingTs = Date.now();
+          ws.send(JSON.stringify({ method: 'ping' }));
+        }
       }, 30000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
 
@@ -456,6 +474,7 @@ const EXCHANGE_WS = {
 
       ws.onmessage = (ev) => {
         let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.id === 0 && d.result === 'pong') { trackPong(exId); return; }
         if (d.book) {
           if (d.type === 'snapshot') {
             snapBids = {}; snapAsks = {};
@@ -480,8 +499,10 @@ const EXCHANGE_WS = {
       };
 
       const pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN)
+        if (ws.readyState === WebSocket.OPEN) {
+          exRaw[exId].pingTs = Date.now();
           ws.send(JSON.stringify({ id: 0, method: 'server.ping', params: [] }));
+        }
       }, 5000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
       return [ws];
@@ -596,6 +617,7 @@ const EXCHANGE_WS = {
 
       ws.onmessage = (ev) => {
         let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.method === 'server.pong') { trackPong(exId); return; }
         if (d.method === 'depth.update') {
           const { is_full, depth } = d.data || {};
           if (is_full) {
@@ -623,8 +645,10 @@ const EXCHANGE_WS = {
       };
 
       const pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN)
+        if (ws.readyState === WebSocket.OPEN) {
+          exRaw[exId].pingTs = Date.now();
           ws.send(JSON.stringify({ method: 'server.ping', params: {}, id: 0 }));
+        }
       }, 30000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
       return [ws];
@@ -645,6 +669,7 @@ const EXCHANGE_WS = {
 
       ws.onmessage = (ev) => {
         let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.id === 0 && !d.method) { trackPong(exId); return; }
         if (d.method === 'depth_update') {
           const [is_full, data] = d.params || [];
           if (is_full) { snapBids = {}; snapAsks = {}; }
@@ -665,8 +690,10 @@ const EXCHANGE_WS = {
       };
 
       const pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN)
+        if (ws.readyState === WebSocket.OPEN) {
+          exRaw[exId].pingTs = Date.now();
           ws.send(JSON.stringify({ id: 0, method: 'ping', params: [] }));
+        }
       }, 30000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
       return [ws];
@@ -688,6 +715,7 @@ const EXCHANGE_WS = {
 
       ws.onmessage = (ev) => {
         let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.event === 'pong') { trackPong(exId); return; }
         if (d.event === 'subscribed') {
           if (d.channel === 'book')   bookChanId  = d.chanId;
           if (d.channel === 'trades') tradeChanId = d.chanId;
@@ -731,8 +759,10 @@ const EXCHANGE_WS = {
       };
 
       const pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN)
+        if (ws.readyState === WebSocket.OPEN) {
+          exRaw[exId].pingTs = Date.now();
           ws.send(JSON.stringify({ event: 'ping' }));
+        }
       }, 30000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
       return [ws];
@@ -807,7 +837,18 @@ function initExRaw(exId) {
     snapshotBids: {}, snapshotAsks: {},
     status: 'connecting',
     pollTimer: null,
+    pingTs:  null,   // timestamp when last ping was sent
+    latency: null,   // most recent round-trip ms
   };
+}
+
+// Call inside onmessage when a pong is detected
+function trackPong(exId) {
+  const raw = exRaw[exId];
+  if (raw?.pingTs != null) {
+    raw.latency = Date.now() - raw.pingTs;
+    raw.pingTs  = null;
+  }
 }
 
 function disconnectExchange(exId) {
@@ -862,17 +903,26 @@ function reconnectAll() {
 
 // ── Status display ─────────────────────────────────────────────────
 function updateStatus() {
-  const total = state.exchanges.length;
-  const ok = state.exchanges.filter(id => exRaw[id]?.status === 'connected').length;
-  const dot   = document.getElementById('status-dot');
-  const label = document.getElementById('status-label');
-  if (ok === 0) {
-    dot.className = 'status-dot disconnected'; label.textContent = 'Disconnected';
-  } else if (ok < total) {
-    dot.className = 'status-dot connecting';   label.textContent = `${ok}/${total}`;
-  } else {
-    dot.className = 'status-dot connected';    label.textContent = 'Connected';
-  }
+  const bar = document.getElementById('ex-status-bar');
+  if (!bar) return;
+  bar.innerHTML = state.exchanges.map(exId => {
+    const raw    = exRaw[exId];
+    const status = raw?.status || 'disconnected';
+    const lat    = raw?.latency;
+    const dotCls = status === 'connected'  ? 'ex-dot-ok' :
+                   status === 'connecting' ? 'ex-dot-wait' : 'ex-dot-err';
+    let pingTxt = '—', pingCls = '';
+    if (lat != null) {
+      pingTxt = lat + 'ms';
+      pingCls = lat < 100 ? ' ping-fast' : lat < 300 ? ' ping-mid' : ' ping-slow';
+    }
+    const color = EXCHANGE_COLORS[exId] || DEFAULT_EX_COLOR;
+    return `<span class="ex-chip ex-chip-${status}" title="${exId}">` +
+           `<span class="ex-chip-dot ${dotCls}"></span>` +
+           `<span class="ex-chip-name" style="color:${color}">${exId}</span>` +
+           `<span class="ex-chip-ping${pingCls}">${pingTxt}</span>` +
+           `</span>`;
+  }).join('');
 }
 
 // ── Aggregation (raw → state.lastData) ────────────────────────────
@@ -938,6 +988,7 @@ function aggregateAll() {
     if (newCenter !== state.centerPrice) state.centerPrice = newCenter;
   }
 
+  updateStatus();
   state.dirty = true;
 }
 
