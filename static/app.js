@@ -1127,11 +1127,7 @@ function render() {
 
   prices.forEach((price, r) => {
     const pk   = priceKey(price, precision);
-    const isCP = (price === state.centerPrice);
-    const tr   = ladderRows[r];
-
-    if (isCP && !tr.classList.contains('row-current-price')) tr.classList.add('row-current-price');
-    else if (!isCP && tr.classList.contains('row-current-price')) tr.classList.remove('row-current-price');
+    const tr = ladderRows[r];
 
     const { textEl, markersEl } = priceLabels[r];
     const pText = priceKey(price, precision);

@@ -9,9 +9,7 @@
   --text:        #c9d1d9;
   --text-muted:  #6e7681;
   --accent:      #388bfd;
-  --price-bg:    #2d2a1a;
-  --price-text:  #e3b341;
-  --bid-clr:     rgba(35, 134, 54, 1);
+--bid-clr:     rgba(35, 134, 54, 1);
   --ask-clr:     rgba(248, 81, 73, 1);
   --trade-buy:   #3fb950;
   --trade-sell:  #f85149;
@@ -270,26 +268,6 @@ body {
 }
 
 /* ── Row states ──────────────────────────────────────────────────── */
-.row-current-price {
-  background: var(--price-bg) !important;
-}
-.row-current-price td {
-  background: var(--price-bg) !important;
-  color: var(--price-text) !important;
-}
-.row-current-price td.price-col {
-  background: var(--price-bg) !important;
-  color: var(--price-text) !important;
-  font-weight: 700;
-}
-
-/* Pulsing border on current price row */
-@keyframes price-pulse {
-  0%   { box-shadow: inset 0 0 0 1px rgba(227, 179, 65, 0.8); }
-  50%  { box-shadow: inset 0 0 0 1px rgba(227, 179, 65, 0.2); }
-  100% { box-shadow: inset 0 0 0 1px rgba(227, 179, 65, 0.8); }
-}
-.row-current-price { animation: price-pulse 1.5s ease-in-out infinite; }
 
 /* ── Cell types ──────────────────────────────────────────────────── */
 .cell-depth-bid  { color: var(--trade-buy); }
