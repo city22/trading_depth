@@ -71,67 +71,21 @@ const EXCHANGE_WS = {
   binance: {
     connect(symbol, exId) {
       const sLow = symbol.replace('/', '').toLowerCase();
-      const sUp  = symbol.replace('/', '').toUpperCase();
 
-      // Local order book (built from diff stream + REST snapshot)
-      let localBids = {}, localAsks = {};
-      let lastUpdateId = 0;
-      let buffer = [];
-      let ready = false;
-
-      function applyDiff(bArr, aArr) {
-        bArr.forEach(([p, q]) => { if (+q > 0) localBids[p] = +q; else delete localBids[p]; });
-        aArr.forEach(([p, q]) => { if (+q > 0) localAsks[p] = +q; else delete localAsks[p]; });
-        exRaw[exId].bids = { ...localBids };
-        exRaw[exId].asks = { ...localAsks };
-      }
-
-      // Diff depth stream for full order book
+      // Full diff depth stream — builds complete order book incrementally.
+      // No REST needed; depth data accumulates within a few seconds.
       const wsOb = new WebSocket(`wss://stream.binance.com:9443/ws/${sLow}@depth@100ms`);
       wsOb.onmessage = (ev) => {
         const d = JSON.parse(ev.data);
-        if (!ready) { buffer.push(d); return; }
-        if (d.u <= lastUpdateId) return;
-        applyDiff(d.b || [], d.a || []);
-        lastUpdateId = d.u;
+        (d.b || []).forEach(([p, q]) => {
+          if (+q > 0) exRaw[exId].bids[p] = +q; else delete exRaw[exId].bids[p];
+        });
+        (d.a || []).forEach(([p, q]) => {
+          if (+q > 0) exRaw[exId].asks[p] = +q; else delete exRaw[exId].asks[p];
+        });
       };
 
-      // REST snapshot (Binance has CORS enabled for public endpoints)
-      async function fetchSnapshot() {
-        try {
-          const r = await fetch(`https://api.binance.com/api/v3/depth?symbol=${sUp}&limit=1000`);
-          const snap = await r.json();
-          lastUpdateId = snap.lastUpdateId;
-          localBids = {}; localAsks = {};
-          snap.bids.forEach(([p, q]) => { if (+q > 0) localBids[p] = +q; });
-          snap.asks.forEach(([p, q]) => { if (+q > 0) localAsks[p] = +q; });
-          // Apply buffered events that come after the snapshot
-          buffer.forEach(d => {
-            if (d.u <= lastUpdateId) return;
-            applyDiff(d.b || [], d.a || []);
-            lastUpdateId = d.u;
-          });
-          buffer = [];
-          ready = true;
-          exRaw[exId].bids = { ...localBids };
-          exRaw[exId].asks = { ...localAsks };
-        } catch {
-          // CORS fallback: use 20-level partial stream instead
-          const wsFb = new WebSocket(`wss://stream.binance.com:9443/ws/${sLow}@depth20@100ms`);
-          wsFb.onmessage = (ev) => {
-            const d = JSON.parse(ev.data);
-            const bids = {}, asks = {};
-            (d.bids || []).forEach(([p, q]) => { if (+q > 0) bids[p] = +q; });
-            (d.asks || []).forEach(([p, q]) => { if (+q > 0) asks[p] = +q; });
-            exRaw[exId].bids = bids; exRaw[exId].asks = asks;
-          };
-          activeConns[exId] = (activeConns[exId] || []).concat([wsFb]);
-          ready = true; buffer = [];
-        }
-      }
-      wsOb.onopen = () => setTimeout(fetchSnapshot, 200);
-
-      // Trade stream + initial REST history
+      // Trade stream
       const wsTr = new WebSocket(`wss://stream.binance.com:9443/ws/${sLow}@trade`);
       wsTr.onmessage = (ev) => {
         const d = JSON.parse(ev.data);
@@ -141,13 +95,6 @@ const EXCHANGE_WS = {
           pushTrade(exId, { price, qty: +d.q, side: d.m ? 'sell' : 'buy', ts: d.T || Date.now() });
         }
       };
-      fetch(`https://api.binance.com/api/v3/trades?symbol=${sUp}&limit=500`)
-        .then(r => r.json()).then(list => {
-          list.forEach(t => {
-            const price = +t.price;
-            if (price > 0) pushTrade(exId, { price, qty: +t.qty, side: t.isBuyerMaker ? 'sell' : 'buy', ts: t.time });
-          });
-        }).catch(() => {});
 
       return [wsOb, wsTr];
     },
@@ -157,12 +104,12 @@ const EXCHANGE_WS = {
     connect(symbol, exId) {
       const instId = symbol.replace('/', '-');
       const ws = new WebSocket('wss://ws.okx.com:8443/ws/v5/public');
-      let snapshotBids = {}, snapshotAsks = {};
+      let snapBids = {}, snapAsks = {};
 
       ws.onopen = () => ws.send(JSON.stringify({
         op: 'subscribe',
-        // books50-l2-tbt: 50-level tick-by-tick with snapshot+delta
-        args: [{ channel: 'books50-l2-tbt', instId }, { channel: 'trades', instId }],
+        // 'books': 400-level full book, WS snapshot + incremental delta
+        args: [{ channel: 'books', instId }, { channel: 'trades', instId }],
       }));
 
       ws.onmessage = (ev) => {
@@ -171,22 +118,22 @@ const EXCHANGE_WS = {
         if (!d.arg || !d.data) return;
 
         const ch = d.arg.channel;
-        if (ch === 'books50-l2-tbt') {
+        if (ch === 'books') {
           const book = d.data[0] || {};
           if (d.action === 'snapshot') {
-            snapshotBids = {}; snapshotAsks = {};
-            (book.bids || []).forEach(([p, q]) => { if (+q > 0) snapshotBids[p] = +q; });
-            (book.asks || []).forEach(([p, q]) => { if (+q > 0) snapshotAsks[p] = +q; });
+            snapBids = {}; snapAsks = {};
+            (book.bids || []).forEach(([p, q]) => { if (+q > 0) snapBids[p] = +q; });
+            (book.asks || []).forEach(([p, q]) => { if (+q > 0) snapAsks[p] = +q; });
           } else {
             (book.bids || []).forEach(([p, q]) => {
-              if (+q > 0) snapshotBids[p] = +q; else delete snapshotBids[p];
+              if (+q > 0) snapBids[p] = +q; else delete snapBids[p];
             });
             (book.asks || []).forEach(([p, q]) => {
-              if (+q > 0) snapshotAsks[p] = +q; else delete snapshotAsks[p];
+              if (+q > 0) snapAsks[p] = +q; else delete snapAsks[p];
             });
           }
-          exRaw[exId].bids = { ...snapshotBids };
-          exRaw[exId].asks = { ...snapshotAsks };
+          exRaw[exId].bids = { ...snapBids };
+          exRaw[exId].asks = { ...snapAsks };
         } else if (ch === 'trades') {
           d.data.forEach(t => {
             const price = +t.px;
@@ -202,15 +149,6 @@ const EXCHANGE_WS = {
         if (ws.readyState === WebSocket.OPEN) ws.send('ping');
       }, 25000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
-
-      // Initial trade history (OKX has CORS enabled)
-      fetch(`https://www.okx.com/api/v5/market/trades?instId=${instId}&limit=100`)
-        .then(r => r.json()).then(data => {
-          (data.data || []).forEach(t => {
-            const price = +t.px;
-            if (price > 0) pushTrade(exId, { price, qty: +t.sz, side: t.side, ts: +t.ts });
-          });
-        }).catch(() => {});
 
       return [ws];
     },
@@ -263,15 +201,6 @@ const EXCHANGE_WS = {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ op: 'ping' }));
       }, 20000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
-
-      // Initial trade history (Bybit has CORS enabled)
-      fetch(`https://api.bybit.com/v5/market/recent-trade?category=spot&symbol=${s}&limit=60`)
-        .then(r => r.json()).then(data => {
-          (data.result?.list || []).forEach(t => {
-            const price = +t.price;
-            if (price > 0) pushTrade(exId, { price, qty: +t.size, side: t.side === 'Buy' ? 'buy' : 'sell', ts: +t.time });
-          });
-        }).catch(() => {});
 
       return [ws];
     },
@@ -532,15 +461,18 @@ setInterval(() => {
 const activeConns = {};  // exId -> [WebSocket, ...]
 
 function initExRaw(exId) {
+  if (exRaw[exId]?.pollTimer) clearInterval(exRaw[exId].pollTimer);
   exRaw[exId] = {
     bids: {}, asks: {}, trades: [],
     lastPrice: null,
     snapshotBids: {}, snapshotAsks: {},
     status: 'connecting',
+    pollTimer: null,
   };
 }
 
 function disconnectExchange(exId) {
+  if (exRaw[exId]?.pollTimer) { clearInterval(exRaw[exId].pollTimer); exRaw[exId].pollTimer = null; }
   (activeConns[exId] || []).forEach(ws => { ws.onclose = null; ws.close(); });
   delete activeConns[exId];
 }
