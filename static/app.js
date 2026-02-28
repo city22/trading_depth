@@ -10,21 +10,27 @@ const COL_LABELS  = {
 };
 
 const EXCHANGE_COLORS = {
-  binance: '#F0B90B', okx: '#2979ff',  bybit:  '#f7a600',
-  gate:    '#00b8b8', mexc: '#00b14f', htx:    '#3f9eff',
-  bitget:  '#00c087', kraken: '#8247e5',
+  binance:   '#F0B90B', okx:       '#2979ff', bybit:    '#f7a600',
+  gate:      '#00b8b8', mexc:      '#00b14f', htx:      '#3f9eff',
+  bitget:    '#00c087', kraken:    '#8247e5', phemex:   '#e84142',
+  bingx:     '#1677ff', cryptocom: '#103f68', coinex:   '#00a2e8',
+  whitebit:  '#5c67ff', bitfinex:  '#16b157', xt:       '#ff6b35',
 };
 const DEFAULT_EX_COLOR = '#6e7681';
 
 // Exchanges available in pure-frontend mode (direct public WS)
-const ALL_EXCHANGES = ['binance', 'okx', 'bybit', 'gate', 'mexc', 'htx', 'bitget', 'kraken'];
+const ALL_EXCHANGES = [
+  'binance', 'okx',      'bybit',    'gate',   'mexc',
+  'htx',     'bitget',   'kraken',   'phemex', 'bingx',
+  'cryptocom','coinex',  'whitebit', 'bitfinex','xt',
+];
 
 // ── Application State ──────────────────────────────────────────────
 const state = {
-  symbol:      'BTC/USDT',
+  symbol:      'SOL/USDT',
   exchanges:   ['binance', 'okx', 'bybit'],
   timeWindow:  5,
-  precision:   1,
+  precision:   0.01,
   dirty:       false,
   lastData:    null,
   centerPrice: null,
@@ -431,6 +437,339 @@ const EXCHANGE_WS = {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ method: 'ping' }));
       }, 30000);
       ws.addEventListener('close', () => clearInterval(pingTimer));
+
+      return [ws];
+    },
+  },
+
+  // Phemex spot — spot_orderbook / spot_trade channels, plain JSON
+  phemex: {
+    connect(symbol, exId) {
+      const s = 's' + symbol.replace('/', ''); // SOL/USDT → sSOLUSDT
+      const ws = new WebSocket('wss://phemex.com/ws');
+      let snapBids = {}, snapAsks = {};
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ id: 1, method: 'spot_orderbook.subscribe', params: [s, true, 30] }));
+        ws.send(JSON.stringify({ id: 2, method: 'spot_trade.subscribe',     params: [s] }));
+      };
+
+      ws.onmessage = (ev) => {
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.book) {
+          if (d.type === 'snapshot') {
+            snapBids = {}; snapAsks = {};
+            (d.book.bids || []).forEach(([p, q]) => { if (+q > 0) snapBids[p] = +q; });
+            (d.book.asks || []).forEach(([p, q]) => { if (+q > 0) snapAsks[p] = +q; });
+          } else {
+            (d.book.bids || []).forEach(([p, q]) => { if (+q > 0) snapBids[p] = +q; else delete snapBids[p]; });
+            (d.book.asks || []).forEach(([p, q]) => { if (+q > 0) snapAsks[p] = +q; else delete snapAsks[p]; });
+          }
+          exRaw[exId].bids = { ...snapBids };
+          exRaw[exId].asks = { ...snapAsks };
+        }
+        if (d.trades) {
+          (d.trades || []).forEach(([ts_ns, side, p, q]) => {
+            const price = +p;
+            if (price > 0) {
+              exRaw[exId].lastPrice = price;
+              pushTrade(exId, { price, qty: +q, side: side === 'Buy' ? 'buy' : 'sell', ts: Math.floor(+ts_ns / 1e6) || Date.now() });
+            }
+          });
+        }
+      };
+
+      const pingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN)
+          ws.send(JSON.stringify({ id: 0, method: 'server.ping', params: [] }));
+      }, 5000);
+      ws.addEventListener('close', () => clearInterval(pingTimer));
+      return [ws];
+    },
+  },
+
+  // BingX spot — gzip-compressed binary frames
+  bingx: {
+    connect(symbol, exId) {
+      const s = symbol.replace('/', '-'); // SOL/USDT → SOL-USDT
+      const ws = new WebSocket('wss://open-api-ws.bingx.com/market');
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ id: '1', reqType: 'sub', dataType: `${s}@depth20` }));
+        ws.send(JSON.stringify({ id: '2', reqType: 'sub', dataType: `${s}@trade` }));
+      };
+
+      ws.onmessage = async (ev) => {
+        let text;
+        if (typeof ev.data === 'string') {
+          text = ev.data;
+        } else {
+          try {
+            const ds = new DecompressionStream('gzip');
+            const stream = new Blob([ev.data]).stream().pipeThrough(ds);
+            text = await new Response(stream).text();
+          } catch { return; }
+        }
+        if (text === 'Ping') { ws.send('Pong'); return; }
+        let d; try { d = JSON.parse(text); } catch { return; }
+        if (d.ping) { ws.send(JSON.stringify({ pong: d.ping })); return; }
+
+        const dt = d.dataType || '';
+        if (dt.includes('@depth')) {
+          const bids = {}, asks = {};
+          (d.data?.bids || []).forEach(([p, q]) => { if (+q > 0) bids[p] = +q; });
+          (d.data?.asks || []).forEach(([p, q]) => { if (+q > 0) asks[p] = +q; });
+          exRaw[exId].bids = bids;
+          exRaw[exId].asks = asks;
+        } else if (dt.includes('@trade')) {
+          const trades = Array.isArray(d.data) ? d.data : (d.data ? [d.data] : []);
+          trades.forEach(t => {
+            const price = +t.p;
+            if (price > 0) {
+              exRaw[exId].lastPrice = price;
+              pushTrade(exId, { price, qty: +t.q, side: t.m ? 'sell' : 'buy', ts: +t.T || Date.now() });
+            }
+          });
+        }
+      };
+
+      return [ws];
+    },
+  },
+
+  // Crypto.com Exchange v1
+  cryptocom: {
+    connect(symbol, exId) {
+      const s = symbol.replace('/', '_'); // SOL/USDT → SOL_USDT
+      const ws = new WebSocket('wss://stream.crypto.com/exchange/v1/market');
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          method: 'subscribe',
+          params: { channels: [`book.${s}.50`, `trade.${s}`] },
+        }));
+      };
+
+      ws.onmessage = (ev) => {
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.method === 'public/heartbeat') {
+          ws.send(JSON.stringify({ method: 'public/respond-heartbeat', id: d.id }));
+          return;
+        }
+        const result = d.result;
+        if (!result) return;
+        const ch = result.channel;
+        if (ch === 'book') {
+          const book = result.data?.[0];
+          if (!book) return;
+          const bids = {}, asks = {};
+          (book.bids || []).forEach(([p, q]) => { if (+q > 0) bids[String(p)] = +q; });
+          (book.asks || []).forEach(([p, q]) => { if (+q > 0) asks[String(p)] = +q; });
+          exRaw[exId].bids = bids;
+          exRaw[exId].asks = asks;
+        } else if (ch === 'trade') {
+          (result.data || []).forEach(t => {
+            const price = +t.p;
+            if (price > 0) {
+              exRaw[exId].lastPrice = price;
+              pushTrade(exId, { price, qty: +t.q, side: t.s === 'BUY' ? 'buy' : 'sell', ts: +t.t || Date.now() });
+            }
+          });
+        }
+      };
+
+      return [ws];
+    },
+  },
+
+  // CoinEx v2 spot WebSocket
+  coinex: {
+    connect(symbol, exId) {
+      const s = symbol.replace('/', ''); // SOLUSDT
+      const ws = new WebSocket('wss://socket.coinex.com/v2/spot');
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ method: 'depth.subscribe',  params: { market_list: [{ market: s, limit: 50, interval: '0' }] }, id: 1 }));
+        ws.send(JSON.stringify({ method: 'deals.subscribe',  params: { market_list: [s] }, id: 2 }));
+      };
+
+      ws.onmessage = (ev) => {
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.method === 'depth.update') {
+          const { is_full, depth } = d.data || {};
+          if (is_full) {
+            const bids = {}, asks = {};
+            (depth?.bids || []).forEach(([p, q]) => { if (+q > 0) bids[p] = +q; });
+            (depth?.asks || []).forEach(([p, q]) => { if (+q > 0) asks[p] = +q; });
+            exRaw[exId].bids = bids;
+            exRaw[exId].asks = asks;
+          } else {
+            const bids = { ...exRaw[exId].bids }, asks = { ...exRaw[exId].asks };
+            (depth?.bids || []).forEach(([p, q]) => { if (+q > 0) bids[p] = +q; else delete bids[p]; });
+            (depth?.asks || []).forEach(([p, q]) => { if (+q > 0) asks[p] = +q; else delete asks[p]; });
+            exRaw[exId].bids = bids;
+            exRaw[exId].asks = asks;
+          }
+        } else if (d.method === 'deals.update') {
+          (d.data?.deal_list || []).forEach(t => {
+            const price = +t.price;
+            if (price > 0) {
+              exRaw[exId].lastPrice = price;
+              pushTrade(exId, { price, qty: +t.amount, side: t.side, ts: Math.floor(+t.created_at / 1000) || Date.now() });
+            }
+          });
+        }
+      };
+
+      const pingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN)
+          ws.send(JSON.stringify({ method: 'server.ping', params: {}, id: 0 }));
+      }, 30000);
+      ws.addEventListener('close', () => clearInterval(pingTimer));
+      return [ws];
+    },
+  },
+
+  // WhiteBIT WebSocket
+  whitebit: {
+    connect(symbol, exId) {
+      const s = symbol.replace('/', '_'); // SOL_USDT
+      const ws = new WebSocket('wss://api.whitebit.com/ws');
+      let snapBids = {}, snapAsks = {};
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ id: 1, method: 'depth_subscribe', params: [s, 100, '0', true] }));
+        ws.send(JSON.stringify({ id: 2, method: 'deals_subscribe', params: [s] }));
+      };
+
+      ws.onmessage = (ev) => {
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.method === 'depth_update') {
+          const [is_full, data] = d.params || [];
+          if (is_full) { snapBids = {}; snapAsks = {}; }
+          (data?.bids || []).forEach(([p, q]) => { if (+q > 0) snapBids[p] = +q; else delete snapBids[p]; });
+          (data?.asks || []).forEach(([p, q]) => { if (+q > 0) snapAsks[p] = +q; else delete snapAsks[p]; });
+          exRaw[exId].bids = { ...snapBids };
+          exRaw[exId].asks = { ...snapAsks };
+        } else if (d.method === 'deals_update') {
+          const [, trades] = d.params || [];
+          (trades || []).forEach(t => {
+            const price = +t.price;
+            if (price > 0) {
+              exRaw[exId].lastPrice = price;
+              pushTrade(exId, { price, qty: +t.amount, side: t.type, ts: +(t.time * 1000) || Date.now() });
+            }
+          });
+        }
+      };
+
+      const pingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN)
+          ws.send(JSON.stringify({ id: 0, method: 'ping', params: [] }));
+      }, 30000);
+      ws.addEventListener('close', () => clearInterval(pingTimer));
+      return [ws];
+    },
+  },
+
+  // Bitfinex v2 WebSocket — channel-based, USDT pair uses "UST" suffix
+  bitfinex: {
+    connect(symbol, exId) {
+      const s = 't' + symbol.replace('/', '').replace(/USDT$/, 'UST'); // SOL/USDT → tSOLUST
+      const ws = new WebSocket('wss://api-pub.bitfinex.com/ws/2');
+      let bookChanId = null, tradeChanId = null;
+      let snapBids = {}, snapAsks = {};
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ event: 'subscribe', channel: 'book',   symbol: s, prec: 'P0', freq: 'F0', len: '100' }));
+        ws.send(JSON.stringify({ event: 'subscribe', channel: 'trades', symbol: s }));
+      };
+
+      ws.onmessage = (ev) => {
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.event === 'subscribed') {
+          if (d.channel === 'book')   bookChanId  = d.chanId;
+          if (d.channel === 'trades') tradeChanId = d.chanId;
+          return;
+        }
+        if (!Array.isArray(d)) return;
+        const [chanId, payload] = d;
+        if (payload === 'hb') return;
+
+        if (chanId === bookChanId) {
+          const apply = ([price, count, amount]) => {
+            const k = String(price);
+            if (count === 0) { delete snapBids[k]; delete snapAsks[k]; }
+            else if (amount > 0) snapBids[k] = amount;
+            else snapAsks[k] = Math.abs(amount);
+          };
+          if (Array.isArray(payload[0])) {
+            snapBids = {}; snapAsks = {};
+            payload.forEach(apply);
+          } else {
+            apply(payload);
+          }
+          exRaw[exId].bids = { ...snapBids };
+          exRaw[exId].asks = { ...snapAsks };
+        } else if (chanId === tradeChanId) {
+          if (payload === 'te' || payload === 'tu') {
+            const [, ts, amount, price] = d[2];
+            if (+price > 0) {
+              exRaw[exId].lastPrice = +price;
+              pushTrade(exId, { price: +price, qty: Math.abs(amount), side: amount > 0 ? 'buy' : 'sell', ts });
+            }
+          } else if (Array.isArray(payload)) {
+            payload.forEach(([, ts, amount, price]) => {
+              if (+price > 0) {
+                exRaw[exId].lastPrice = +price;
+                pushTrade(exId, { price: +price, qty: Math.abs(amount), side: amount > 0 ? 'buy' : 'sell', ts });
+              }
+            });
+          }
+        }
+      };
+
+      const pingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN)
+          ws.send(JSON.stringify({ event: 'ping' }));
+      }, 30000);
+      ws.addEventListener('close', () => clearInterval(pingTimer));
+      return [ws];
+    },
+  },
+
+  // XT.com public WebSocket
+  xt: {
+    connect(symbol, exId) {
+      const s = symbol.replace('/', '_').toLowerCase(); // sol_usdt
+      const ws = new WebSocket('wss://stream.xt.com/public');
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ method: 'subscribe', params: [`depth@${s},20`], id: '1' }));
+        ws.send(JSON.stringify({ method: 'subscribe', params: [`trade@${s}`],     id: '2' }));
+      };
+
+      ws.onmessage = (ev) => {
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.event === 'ping') { ws.send(JSON.stringify({ event: 'pong', ts: d.ts })); return; }
+
+        if (d.event === 'depth_update') {
+          const bids = {}, asks = {};
+          (d.data?.b || []).forEach(([p, q]) => { if (+q > 0) bids[p] = +q; });
+          (d.data?.a || []).forEach(([p, q]) => { if (+q > 0) asks[p] = +q; });
+          exRaw[exId].bids = bids;
+          exRaw[exId].asks = asks;
+        } else if (d.event === 'trade') {
+          (d.data || []).forEach(t => {
+            const price = +t.p;
+            if (price > 0) {
+              exRaw[exId].lastPrice = price;
+              pushTrade(exId, { price, qty: +t.q, side: t.b ? 'buy' : 'sell', ts: +t.t || Date.now() });
+            }
+          });
+        }
+      };
 
       return [ws];
     },
