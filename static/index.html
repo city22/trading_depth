@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Depth & Trade Monitor</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ─── Controls Bar ──────────────────────────────────────────────── -->
+  <header id="controls">
+    <div class="ctrl-group">
+      <label for="symbol-input">Symbol</label>
+      <input id="symbol-input" type="text" value="BTC/USDT" spellcheck="false" />
+    </div>
+
+    <div class="ctrl-group">
+      <label>Exchanges</label>
+      <div id="exchange-checkboxes" class="checkbox-group">
+        <!-- Populated by app.js -->
+      </div>
+    </div>
+
+    <div class="ctrl-group">
+      <label>Time Window</label>
+      <div class="btn-group" id="tw-group">
+        <button class="tw-btn" data-value="1">1s</button>
+        <button class="tw-btn active" data-value="5">5s</button>
+        <button class="tw-btn" data-value="10">10s</button>
+        <button class="tw-btn" data-value="60">1m</button>
+      </div>
+    </div>
+
+    <div class="ctrl-group">
+      <label>Precision</label>
+      <div class="btn-group" id="prec-group">
+        <button class="prec-btn active" data-value="1">1</button>
+        <button class="prec-btn" data-value="0.1">0.1</button>
+        <button class="prec-btn" data-value="0.01">0.01</button>
+        <button class="prec-btn" data-value="0.001">0.001</button>
+      </div>
+    </div>
+
+    <div class="ctrl-group ctrl-apply">
+      <button id="apply-btn">Apply</button>
+    </div>
+
+    <div class="ctrl-group ctrl-status">
+      <span id="status-dot" class="status-dot disconnected" title="WebSocket status"></span>
+      <span id="status-label">Disconnected</span>
+    </div>
+  </header>
+
+  <!-- ─── Main Content ─────────────────────────────────────────────── -->
+  <main id="main">
+    <div id="table-wrapper">
+      <table id="ladder-table">
+        <thead id="ladder-thead"></thead>
+        <tbody id="ladder-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- ─── Arb Sidebar ──────────────────────────────────────────── -->
+    <aside id="arb-sidebar">
+      <div class="arb-sb-header">ARB HISTORY</div>
+
+      <div class="arb-sb-section">
+        <div class="arb-sb-section-title">⚡ ALERTS &gt;0.2%</div>
+        <div id="arb-alerts-list">
+          <div class="arb-sb-empty">No alerts yet</div>
+        </div>
+      </div>
+
+      <div class="arb-sb-divider"></div>
+
+      <div class="arb-sb-section">
+        <div class="arb-sb-section-title">PER MINUTE</div>
+        <div id="arb-minute-list"></div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ─── Legend ───────────────────────────────────────────────────── -->
+  <footer id="legend">
+    <span class="legend-item">
+      <span class="legend-swatch depth-bid-swatch"></span>Depth Bid
+    </span>
+    <span class="legend-item">
+      <span class="legend-swatch depth-ask-swatch"></span>Depth Ask
+    </span>
+    <span class="legend-item">
+      <span class="legend-swatch trade-bid-swatch"></span>Trade Buy
+    </span>
+    <span class="legend-item">
+      <span class="legend-swatch trade-ask-swatch"></span>Trade Sell
+    </span>
+    <span class="legend-item legend-price-row">
+      ★ Current Price Row
+    </span>
+    <div id="arb-indicator" class="arb-none">
+      <span id="arb-title">ARB</span>
+      <span id="arb-exchanges"></span>
+      <span id="arb-spread">—</span>
+      <span id="arb-pct"></span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

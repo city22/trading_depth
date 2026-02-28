@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip:*)",
+      "Bash(python:*)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(curl:*)",
+      "Bash(echo:*)",
+      "Bash(taskkill:*)",
+      "Bash(nc:*)",
+      "Bash(HTTPS_PROXY=http://127.0.0.1:10808 HTTP_PROXY=http://127.0.0.1:10808 .venv/Scripts/python.exe:*)",
+      "Bash(netstat -ano)",
+      "Bash(xargs -r -I{} taskkill /F /PID {})",
+      "Bash(powershell:*)",
+      "Bash(SOCKS_PROXY=socks5h://127.0.0.1:10808 .venv/Scripts/python.exe:*)",
+      "Bash(start:*)",
+      "Bash(node:*)",
+      "Bash(pip install:*)",
+      "Bash(choco install:*)",
+      "Bash(python3:*)",
+      "Bash(sshpass:*)",
+      "Bash(pkill:*)",
+      "Bash(npx vercel:*)"
+    ]
+  }
+}
