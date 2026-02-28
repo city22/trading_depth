@@ -29,7 +29,7 @@ const ALL_EXCHANGES = [
 const state = {
   symbol:      'SOL/USDT',
   exchanges:   ['binance', 'okx', 'bybit'],
-  timeWindow:  5,
+  timeWindow:  30,
   precision:   0.01,
   dirty:       false,
   lastData:    null,
