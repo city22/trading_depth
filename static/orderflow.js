@@ -519,23 +519,31 @@ function render() {
     liveCandle = newCandle(livePts);
   }
 
-  // Right-align completed candles; live always at rightmost column
-  const cols   = new Array(tableCols).fill(null);
-  const shown  = completedCandles.slice(-DISPLAY_COLS);
-  const offset = DISPLAY_COLS - shown.length;
-  shown.forEach((c, i) => { cols[offset + i] = c; });
-  cols[tableCols - 1] = liveCandle;
+  // ── Time axis: always generate fixed time slots from current period backwards ──
+  const periodMs  = state.period * 1000;
+  const timeAxis  = [];
+  for (let i = DISPLAY_COLS - 1; i >= 0; i--) {
+    timeAxis.push(livePts - i * periodMs);   // oldest → newest
+  }
+  timeAxis.push(livePts);                    // last slot = live
 
-  // Update column headers
+  // Map each time slot to its candle (null if no trades that period)
+  const candleMap = new Map(completedCandles.map(c => [c.startTs, c]));
+  const cols = timeAxis.map((ts, i) =>
+    i === DISPLAY_COLS ? liveCandle : (candleMap.get(ts) || null)
+  );
+
+  // Update column headers with real times
   for (let c = 0; c < tableCols; c++) {
+    const ts     = timeAxis[c];
+    const isLive = (c === DISPLAY_COLS);
     const candle = cols[c];
     const { th1 } = colHeaders[c];
-    const isLive = (c === tableCols - 1);
-    let label = isLive ? 'LIVE' : (candle ? fmtTime(candle.startTs) : '—');
-    if (candle && !isLive) {
+    let label = isLive ? 'LIVE' : fmtTime(ts);
+    if (!isLive && candle && candle.open !== null) {
       const delta = candle.buyVol - candle.sellVol;
       const sign  = delta >= 0 ? '+' : '';
-      label += `\n${fmtPeriod(state.period)} Δ${sign}${fmtVol(Math.abs(delta))}`;
+      label += `\n${sign}${fmtVol(Math.abs(delta))}`;
     }
     if (th1.textContent !== label) th1.textContent = label;
   }
