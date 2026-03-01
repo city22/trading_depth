@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Orderflow Chart</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d1117; --bg-h: #161b22; --border: #30363d;
+      --text: #c9d1d9; --muted: #6e7681; --accent: #388bfd;
+      --buy: #3fb950; --sell: #f85149; --poc: #e3b341;
+      --font: "JetBrains Mono","Cascadia Code","Fira Code","Consolas",monospace;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 12px; overflow: hidden; }
+    body { display: flex; flex-direction: column; }
+
+    /* ── Controls ── */
+    #of-controls {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+      padding: 7px 14px; background: var(--bg-h); border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .ctrl-group { display: flex; align-items: center; gap: 6px; }
+    .ctrl-group label { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .nav-link { color: var(--muted); font-size: 11px; text-decoration: none; padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; }
+    .nav-link:hover { color: var(--text); border-color: var(--accent); }
+    #of-symbol { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 7px; font-family: var(--font); font-size: 12px; width: 100px; outline: none; }
+    #of-symbol:focus { border-color: var(--accent); }
+    .btn-group { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+    .btn-group button { background: var(--bg); color: var(--muted); border: none; border-right: 1px solid var(--border); padding: 3px 8px; font-family: var(--font); font-size: 11px; cursor: pointer; transition: background 0.1s; }
+    .btn-group button:last-child { border-right: none; }
+    .btn-group button:hover { background: #21262d; color: var(--text); }
+    .btn-group button.active { background: var(--accent); color: #fff; }
+    #of-apply { background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 4px 12px; font-family: var(--font); font-size: 12px; cursor: pointer; }
+    #of-apply:hover { opacity: 0.85; }
+    .checkbox-group { display: flex; flex-wrap: wrap; gap: 5px; }
+    .ex-label { display: flex; align-items: center; gap: 3px; cursor: pointer; font-size: 11px; user-select: none; }
+    .ex-label input { accent-color: var(--accent); cursor: pointer; }
+
+    /* ── Status bar ── */
+    #of-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 3px 12px; background: #0f1419; border-bottom: 1px solid var(--border); flex-shrink: 0; min-height: 24px; }
+    .ex-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px 1px 4px; border-radius: 3px; border: 1px solid var(--border); font-size: 10px; }
+    .ex-chip-connected { border-color: #238636; }
+    .ex-chip-connecting { border-color: #9e6a03; }
+    .ex-chip-error, .ex-chip-disconnected { border-color: var(--border); }
+    .ex-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+    .dot-ok { background: var(--buy); box-shadow: 0 0 3px var(--buy); }
+    .dot-wait { background: var(--poc); animation: blink 1s infinite; }
+    .dot-err  { background: var(--sell); }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── Table wrapper ── */
+    #of-wrap { flex: 1; overflow: auto; position: relative; }
+    #of-table { border-collapse: collapse; width: max-content; min-width: 100%; table-layout: fixed; }
+
+    /* Sticky price column */
+    #of-table th.of-price-th, #of-table td.of-price-td {
+      position: sticky; left: 0; z-index: 2; background: var(--bg);
+      border-right: 2px solid var(--border); width: 68px; min-width: 68px;
+    }
+    #of-table thead th.of-price-th { z-index: 3; background: var(--bg-h); }
+
+    /* Sticky thead */
+    #of-table thead { position: sticky; top: 0; z-index: 4; }
+
+    /* Header */
+    #of-table thead tr:first-child th {
+      background: var(--bg-h); border-bottom: 1px solid var(--border);
+      padding: 4px 6px; font-size: 11px; font-weight: 600; text-align: center; white-space: nowrap;
+    }
+    #of-table thead tr:nth-child(2) th {
+      background: #0f1419; border-bottom: 2px solid var(--border);
+      padding: 2px 4px; font-size: 10px; color: var(--muted); text-align: center; white-space: nowrap;
+    }
+
+    /* Body cells */
+    #of-table tbody td { border-bottom: 1px solid #1c2128; height: 18px; white-space: nowrap; transition: background 0.08s; }
+    #of-table td.of-price-td { font-size: 11px; font-weight: 500; color: var(--muted); text-align: right; padding: 0 5px 0 3px; }
+    #of-table td.of-price-td.poc-row { color: var(--poc); font-weight: 700; }
+
+    /* Data cell inner */
+    .of-cell-inner { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; height: 100%; gap: 2px; min-width: 80px; width: 80px; }
+    .of-buy  { color: var(--buy);  text-align: right; flex: 1; font-size: 11px; }
+    .of-sell { color: var(--sell); text-align: left;  flex: 1; font-size: 11px; }
+    .of-sep  { color: #484f58; font-size: 10px; flex-shrink: 0; }
+
+    /* Live column marker */
+    td.of-live-td, th.of-live-th { border-left: 2px solid var(--accent) !important; }
+
+    /* POC row in a candle */
+    td.of-poc-cell { outline: 1px solid var(--poc); outline-offset: -1px; }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+    /* ── Footer ── */
+    #of-footer { display: flex; align-items: center; gap: 16px; padding: 5px 14px; background: var(--bg-h); border-top: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; font-size: 10px; color: var(--muted); }
+    .leg { display: flex; align-items: center; gap: 4px; }
+    .leg-sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+    #of-info { margin-left: auto; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+
+  <header id="of-controls">
+    <a href="index.html" class="nav-link">← Depth</a>
+
+    <div class="ctrl-group">
+      <label>Symbol</label>
+      <input id="of-symbol" type="text" value="SOL/USDT" spellcheck="false" />
+    </div>
+
+    <div class="ctrl-group">
+      <label>Period</label>
+      <div class="btn-group" id="period-group">
+        <button class="period-btn active" data-value="60">1m</button>
+        <button class="period-btn" data-value="180">3m</button>
+        <button class="period-btn" data-value="300">5m</button>
+        <button class="period-btn" data-value="900">15m</button>
+      </div>
+    </div>
+
+    <div class="ctrl-group">
+      <label>Precision</label>
+      <div class="btn-group" id="prec-group">
+        <button class="prec-btn" data-value="1">1</button>
+        <button class="prec-btn" data-value="0.1">0.1</button>
+        <button class="prec-btn active" data-value="0.01">0.01</button>
+        <button class="prec-btn" data-value="0.001">0.001</button>
+      </div>
+    </div>
+
+    <div class="ctrl-group">
+      <label>Exchanges</label>
+      <div id="of-exchanges" class="checkbox-group"></div>
+    </div>
+
+    <div class="ctrl-group">
+      <button id="of-apply">Apply</button>
+    </div>
+  </header>
+
+  <div id="of-status"></div>
+
+  <div id="of-wrap">
+    <table id="of-table">
+      <thead id="of-thead"></thead>
+      <tbody id="of-tbody"></tbody>
+    </table>
+  </div>
+
+  <footer id="of-footer">
+    <div class="leg"><div class="leg-sw" style="background:rgba(35,134,54,0.55)"></div>Buy dominated</div>
+    <div class="leg"><div class="leg-sw" style="background:rgba(248,81,73,0.55)"></div>Sell dominated</div>
+    <div class="leg"><span style="color:var(--poc)">■</span>&nbsp;POC (max volume row)</div>
+    <div class="leg"><span style="color:var(--buy)">■</span>&nbsp;Buy vol &nbsp;<span style="color:var(--sell)">■</span>&nbsp;Sell vol</div>
+    <div id="of-info"></div>
+  </footer>
+
+  <script src="orderflow.js"></script>
+</body>
+</html>
