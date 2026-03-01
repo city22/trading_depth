@@ -439,6 +439,7 @@ let prevSells  = [];   // prevSells[r][c]
 let prevBg     = [];
 let prevPoc    = [];   // prevPoc[r][c] = bool
 let prevHasData= [];   // prevHasData[r][c] = bool (for separator)
+let prevOcClass= [];   // prevOcClass[r][c] = '' | 'of-oc-up' | 'of-oc-down'
 let colHeaders = [];   // colHeaders[c] = { th1, th2 }
 let builtCols  = 0;
 
@@ -449,7 +450,7 @@ function buildTable() {
   const tbody = document.getElementById('of-tbody');
   thead.innerHTML = '';
   tbody.innerHTML = '';
-  domRows = []; prevPrices = []; prevBuys = []; prevSells = []; prevBg = []; prevPoc = []; prevHasData = [];
+  domRows = []; prevPrices = []; prevBuys = []; prevSells = []; prevBg = []; prevPoc = []; prevHasData = []; prevOcClass = [];
   colHeaders = []; prevLiveCol = -1;
 
   // Header row 1: time labels
@@ -500,6 +501,7 @@ function buildTable() {
     prevBg.push(new Array(tableCols).fill(''));
     prevPoc.push(new Array(tableCols).fill(false));
     prevHasData.push(new Array(tableCols).fill(false));
+    prevOcClass.push(new Array(tableCols).fill(''));
   }
 }
 
@@ -583,6 +585,7 @@ function render() {
       lowRow:   toRow(candle.low),
       openRow:  toRow(candle.open),
       closeRow: toRow(candle.close),
+      isUp:     candle.close >= candle.open,
     };
   });
 
@@ -636,15 +639,20 @@ function render() {
         prevPoc[r][c] = isPoc;
       }
 
-      // OHLC marker
+      // HL vertical bar
       const oi = ohlcInfo[c];
       let mClass = 'of-ohlc-m';
-      if (oi) {
-        if (r >= oi.highRow && r <= oi.lowRow) mClass += ' m-hl';
-        if (r === oi.openRow)                  mClass += ' m-open';
-        if (r === oi.closeRow)                 mClass += ' m-close';
-      }
+      if (oi && r >= oi.highRow && r <= oi.lowRow) mClass += ' m-hl';
       if (ohlcM.className !== mClass) ohlcM.className = mClass;
+
+      // Open / Close bottom-border line
+      const isOcRow = oi && (r === oi.openRow || r === oi.closeRow);
+      const ocClass = isOcRow ? (oi.isUp ? 'of-oc-up' : 'of-oc-down') : '';
+      if (prevOcClass[r][c] !== ocClass) {
+        if (prevOcClass[r][c]) td.classList.remove(prevOcClass[r][c]);
+        if (ocClass)           td.classList.add(ocClass);
+        prevOcClass[r][c] = ocClass;
+      }
     });
 
     // Price column: highlight if it's the POC of the live candle
@@ -737,6 +745,7 @@ function setupBtnGroup(groupId, key) {
         prevBg.forEach(r => r.fill(''));
         prevPoc.forEach(r => r.fill(false));
         prevHasData.forEach(r => r.fill(false));
+        prevOcClass.forEach(r => r.fill(''));
         state.dirty = true;
       }
     });
