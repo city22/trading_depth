@@ -49,8 +49,35 @@
     .dot-err  { background: var(--sell); }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-    /* ── Table wrapper ── */
+    /* ── Main content row ── */
+    #of-content { flex: 1; display: flex; overflow: hidden; }
     #of-wrap { flex: 1; overflow: auto; position: relative; }
+
+    /* ── Right sidebar ── */
+    #of-sidebar { display: flex; flex-shrink: 0; border-left: 1px solid var(--border); overflow: hidden; }
+
+    /* Depth columns panel */
+    #sb-depth { display: flex; overflow-x: auto; overflow-y: hidden; border-right: 1px solid var(--border); }
+    .depth-col { width: 108px; flex-shrink: 0; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+    .depth-col:last-child { border-right: none; }
+    .depth-col-hdr { padding: 3px 6px; font-size: 10px; font-weight: 700; text-align: center; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .depth-asks { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; }
+    .depth-bids { flex: 1; overflow: hidden; }
+    .depth-spread { text-align: center; padding: 1px 4px; font-size: 9px; color: var(--muted); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .depth-row { display: flex; justify-content: space-between; padding: 0 5px; line-height: 16px; font-size: 10px; font-variant-numeric: tabular-nums; }
+    .depth-ask-row { color: var(--sell); }
+    .depth-bid-row { color: var(--buy); }
+    .depth-empty { text-align: center; color: var(--muted); font-size: 10px; padding: 4px; }
+
+    /* Trade feed panel */
+    #sb-trades { width: 160px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .sb-panel-hdr { padding: 3px 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    #sb-trade-list { flex: 1; overflow-y: auto; }
+    .sb-trade-row { display: grid; grid-template-columns: 52px 1fr 1fr; padding: 0 4px; font-size: 10px; border-bottom: 1px solid #1c2128; line-height: 16px; font-variant-numeric: tabular-nums; }
+    .sb-trade-row.buy-row  .sb-tr-p { color: var(--buy); }
+    .sb-trade-row.sell-row .sb-tr-p { color: var(--sell); }
+    .sb-tr-t { color: var(--muted); }
+    .sb-tr-q { text-align: right; color: var(--muted); }
     #of-table { border-collapse: collapse; width: max-content; min-width: 100%; table-layout: fixed; }
 
     /* Sticky price column */
@@ -154,11 +181,20 @@
 
   <div id="of-status"></div>
 
-  <div id="of-wrap">
-    <table id="of-table">
-      <thead id="of-thead"></thead>
-      <tbody id="of-tbody"></tbody>
-    </table>
+  <div id="of-content">
+    <div id="of-wrap">
+      <table id="of-table">
+        <thead id="of-thead"></thead>
+        <tbody id="of-tbody"></tbody>
+      </table>
+    </div>
+    <div id="of-sidebar">
+      <div id="sb-depth"></div>
+      <div id="sb-trades">
+        <div class="sb-panel-hdr">TRADES</div>
+        <div id="sb-trade-list"></div>
+      </div>
+    </div>
   </div>
 
   <footer id="of-footer">

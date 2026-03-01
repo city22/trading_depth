@@ -17,6 +17,8 @@ const EXCHANGE_COLORS = {
   whitebit:'#5c67ff',bitfinex:'#16b157',xt:'#ff6b35',
 };
 
+const MAX_FEED_ROWS = 300;
+
 // ── State ──────────────────────────────────────────────────────────
 const state = {
   symbol:      'SOL/USDT',
@@ -26,6 +28,14 @@ const state = {
   centerPrice: null,
   dirty:       false,
 };
+
+// ── Order book + trade feed state ──────────────────────────────────
+const exBooks       = {};   // exBooks[exId] = { bids:[[p,q],...], asks:[[p,q],...] }
+const bookConns     = {};
+const pendingFeedTrades = [];
+let   feedRowCount  = 0;
+let   bookDirty     = false;
+let   depthBuiltFor = [];
 
 // ── Candle storage ─────────────────────────────────────────────────
 let completedCandles = [];   // sorted oldest→newest, max MAX_STORED
@@ -41,7 +51,8 @@ function newCandle(startTs) {
            volume: 0, buyVol: 0, sellVol: 0, cells: {}, poc: null };
 }
 
-function addTrade(price, qty, side, ts) {
+function addTrade(price, qty, side, ts, exId) {
+  pendingFeedTrades.push({ ts: ts || Date.now(), price, qty, side });
   const pt = getPeriodTs(ts);
 
   // New period started
@@ -388,7 +399,7 @@ function connectExchange(exId, symbol) {
   updateStatus();
 
   let sockets;
-  try { sockets = def.connect(symbol, (price, qty, side, ts) => addTrade(price, qty, side, ts), exId); }
+  try { sockets = def.connect(symbol, (price, qty, side, ts) => addTrade(price, qty, side, ts, exId), exId); }
   catch { exStatus[exId] = 'error'; updateStatus(); return; }
 
   activeConns[exId] = sockets;
@@ -412,6 +423,134 @@ function reconnectAll() {
   const next = new Set(state.exchanges);
   Object.keys(activeConns).forEach(id => { if (!next.has(id)) disconnectExchange(id); });
   state.exchanges.forEach(id => { if (!activeConns[id]) connectExchange(id, state.symbol); });
+  reconnectBooks();
+}
+
+// ── Order book WebSocket connections ───────────────────────────────
+const EXCHANGE_BOOK_WS = {
+  binance: {
+    connect(symbol, cb) {
+      const s = symbol.replace('/', '').toLowerCase();
+      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${s}@depth5@100ms`);
+      ws.onmessage = ev => {
+        const d = JSON.parse(ev.data);
+        cb(d.b.slice(0,8).map(([p,q])=>[p,q]), d.a.slice(0,8).map(([p,q])=>[p,q]));
+      };
+      return [ws];
+    },
+  },
+  okx: {
+    connect(symbol, cb) {
+      const instId = symbol.replace('/', '-');
+      const ws = new WebSocket('wss://ws.okx.com:8443/ws/v5/public');
+      ws.onopen = () => ws.send(JSON.stringify({ op:'subscribe', args:[{ channel:'books5', instId }] }));
+      ws.onmessage = ev => {
+        if (ev.data === 'pong') return;
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.arg?.channel !== 'books5' || !d.data?.[0]) return;
+        const b = d.data[0];
+        cb(b.bids.slice(0,8).map(([p,q])=>[p,q]), b.asks.slice(0,8).map(([p,q])=>[p,q]));
+      };
+      const ping = setInterval(() => ws.readyState === 1 && ws.send('ping'), 25000);
+      ws.addEventListener('close', () => clearInterval(ping));
+      return [ws];
+    },
+  },
+  bybit: {
+    connect(symbol, cb) {
+      const s = symbol.replace('/', '');
+      const ws = new WebSocket('wss://stream.bybit.com/v5/public/spot');
+      ws.onopen = () => ws.send(JSON.stringify({ op:'subscribe', args:[`orderbook.25.${s}`] }));
+      const bidMap = new Map(), askMap = new Map();
+      ws.onmessage = ev => {
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.op === 'pong') return;
+        if (!d.topic?.startsWith('orderbook')) return;
+        if (d.type === 'snapshot') { bidMap.clear(); askMap.clear(); }
+        (d.data.b||[]).forEach(([p,q]) => +q ? bidMap.set(p,q) : bidMap.delete(p));
+        (d.data.a||[]).forEach(([p,q]) => +q ? askMap.set(p,q) : askMap.delete(p));
+        cb([...bidMap].sort((a,b)=>+b[0]-+a[0]).slice(0,8),
+           [...askMap].sort((a,b)=>+a[0]-+b[0]).slice(0,8));
+      };
+      const ping = setInterval(() => ws.readyState === 1 && ws.send(JSON.stringify({ op:'ping' })), 20000);
+      ws.addEventListener('close', () => clearInterval(ping));
+      return [ws];
+    },
+  },
+  gate: {
+    connect(symbol, cb) {
+      const s = symbol.replace('/', '_');
+      const ws = new WebSocket('wss://api.gateio.ws/ws/v4/');
+      ws.onopen = () => ws.send(JSON.stringify({ time:Math.floor(Date.now()/1000), channel:'spot.order_book', event:'subscribe', payload:[s,'5','100ms'] }));
+      ws.onmessage = ev => {
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.channel !== 'spot.order_book' || d.event !== 'update') return;
+        const r = d.result;
+        cb((r.bids||[]).slice(0,8), (r.asks||[]).slice(0,8));
+      };
+      return [ws];
+    },
+  },
+  htx: {
+    connect(symbol, cb) {
+      const s = symbol.replace('/', '').toLowerCase();
+      const ws = new WebSocket('wss://api.huobi.pro/ws');
+      ws.binaryType = 'arraybuffer';
+      ws.onopen = () => ws.send(JSON.stringify({ sub:`market.${s}.mbp.refresh.5`, id:'bk' }));
+      ws.onmessage = async ev => {
+        let text; try { const ds = new DecompressionStream('gzip'); const st = new Blob([ev.data]).stream().pipeThrough(ds); text = await new Response(st).text(); } catch { return; }
+        let d; try { d = JSON.parse(text); } catch { return; }
+        if (d.ping) { ws.send(JSON.stringify({ pong:d.ping })); return; }
+        if (!d.tick) return;
+        cb((d.tick.bids||[]).slice(0,8).map(([p,q])=>[String(p),String(q)]),
+           (d.tick.asks||[]).slice(0,8).map(([p,q])=>[String(p),String(q)]));
+      };
+      return [ws];
+    },
+  },
+  bitget: {
+    connect(symbol, cb) {
+      const [base,quote] = symbol.split('/');
+      const ws = new WebSocket('wss://ws.bitget.com/v2/ws/public');
+      ws.onopen = () => ws.send(JSON.stringify({ op:'subscribe', args:[{ instType:'SPOT', channel:'books5', instId:`${base}${quote}` }] }));
+      ws.onmessage = ev => {
+        let d; try { d = JSON.parse(ev.data); } catch { return; }
+        if (!d.data?.[0]) return;
+        const b = d.data[0];
+        cb((b.bids||[]).slice(0,8), (b.asks||[]).slice(0,8));
+      };
+      const ping = setInterval(() => ws.readyState === 1 && ws.send('ping'), 25000);
+      ws.addEventListener('close', () => clearInterval(ping));
+      return [ws];
+    },
+  },
+};
+
+function connectBook(exId, symbol) {
+  disconnectBook(exId);
+  const def = EXCHANGE_BOOK_WS[exId];
+  if (!def) return;
+  let sockets;
+  try { sockets = def.connect(symbol, (bids, asks) => { exBooks[exId] = { bids, asks }; bookDirty = true; }); }
+  catch { return; }
+  bookConns[exId] = sockets;
+  sockets.forEach(ws => {
+    ws.onclose = () => {
+      setTimeout(() => { if (state.exchanges.includes(exId)) connectBook(exId, state.symbol); }, 3000);
+    };
+  });
+}
+
+function disconnectBook(exId) {
+  (bookConns[exId] || []).forEach(ws => { ws.onclose = null; ws.close(); });
+  delete bookConns[exId];
+  delete exBooks[exId];
+}
+
+function reconnectBooks() {
+  const next = new Set(state.exchanges);
+  Object.keys(bookConns).forEach(id => { if (!next.has(id)) disconnectBook(id); });
+  state.exchanges.forEach(id => { if (!bookConns[id]) connectBook(id, state.symbol); });
 }
 
 // ── Status bar ─────────────────────────────────────────────────────
@@ -716,8 +855,98 @@ function autoScroll() {
   wrap.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
 }
 
+// ── Render depth sidebar ────────────────────────────────────────────
+function renderDepth() {
+  bookDirty = false;
+  const panel = document.getElementById('sb-depth');
+  if (!panel) return;
+  const exs = state.exchanges;
+
+  // Rebuild column structure when selected exchanges change
+  const changed = exs.length !== depthBuiltFor.length || exs.some((id,i) => id !== depthBuiltFor[i]);
+  if (changed) {
+    panel.innerHTML = '';
+    exs.forEach(exId => {
+      const col = document.createElement('div');
+      col.className = 'depth-col';
+      col.id = `dc-${exId}`;
+      const clr = EXCHANGE_COLORS[exId] || '#6e7681';
+      col.innerHTML =
+        `<div class="depth-col-hdr" style="color:${clr}">${exId.toUpperCase()}</div>` +
+        `<div class="depth-asks" id="da-${exId}"></div>` +
+        `<div class="depth-spread" id="ds-${exId}">—</div>` +
+        `<div class="depth-bids" id="db-${exId}"></div>`;
+      panel.appendChild(col);
+    });
+    depthBuiltFor = [...exs];
+  }
+
+  const d = Math.max(0, -Math.floor(Math.log10(state.precision)));
+
+  exs.forEach(exId => {
+    const askEl = document.getElementById(`da-${exId}`);
+    const bidEl = document.getElementById(`db-${exId}`);
+    const spEl  = document.getElementById(`ds-${exId}`);
+    if (!askEl) return;
+    const book = exBooks[exId];
+    if (!book) { askEl.innerHTML = '<div class="depth-empty">—</div>'; bidEl.innerHTML = ''; return; }
+
+    const { asks, bids } = book;
+    // Asks: show high→low so best ask (lowest) is nearest the spread
+    const askHtml = [...asks].reverse().map(([p,q]) =>
+      `<div class="depth-row depth-ask-row"><span>${(+p).toFixed(d)}</span><span>${fmtVol(+q)}</span></div>`).join('');
+    // Bids: show high→low so best bid (highest) is nearest the spread
+    const bidHtml = bids.map(([p,q]) =>
+      `<div class="depth-row depth-bid-row"><span>${(+p).toFixed(d)}</span><span>${fmtVol(+q)}</span></div>`).join('');
+
+    askEl.innerHTML = askHtml;
+    bidEl.innerHTML = bidHtml;
+
+    if (spEl && asks.length && bids.length) {
+      const bestAsk = Math.min(...asks.map(([p]) => +p));
+      const bestBid = Math.max(...bids.map(([p]) => +p));
+      spEl.textContent = (bestAsk - bestBid).toFixed(d);
+    }
+  });
+}
+
+// ── Render trade feed sidebar ───────────────────────────────────────
+function renderTradeFeed() {
+  if (!pendingFeedTrades.length) return;
+  const list = document.getElementById('sb-trade-list');
+  if (!list) return;
+
+  const atBottom = list.scrollHeight - list.clientHeight - list.scrollTop < 40;
+  const frag = document.createDocumentFragment();
+
+  while (pendingFeedTrades.length) {
+    const t = pendingFeedTrades.shift();
+    const row = document.createElement('div');
+    row.className = `sb-trade-row ${t.side === 'buy' ? 'buy-row' : 'sell-row'}`;
+    const dd = new Date(t.ts);
+    const time = `${dd.getHours().toString().padStart(2,'0')}:${dd.getMinutes().toString().padStart(2,'0')}:${dd.getSeconds().toString().padStart(2,'0')}`;
+    const p = priceKey(roundToPrecision(t.price, state.precision), state.precision);
+    row.innerHTML = `<span class="sb-tr-t">${time}</span><span class="sb-tr-p">${p}</span><span class="sb-tr-q">${fmtVol(t.qty)}</span>`;
+    frag.appendChild(row);
+    feedRowCount++;
+  }
+  list.appendChild(frag);
+
+  // Keep DOM rows bounded
+  while (feedRowCount > MAX_FEED_ROWS && list.firstChild) {
+    list.removeChild(list.firstChild);
+    feedRowCount--;
+  }
+  if (atBottom) list.scrollTop = list.scrollHeight;
+}
+
 // ── RAF loop ───────────────────────────────────────────────────────
-function rafLoop() { if (state.dirty) { render(); autoScroll(); } requestAnimationFrame(rafLoop); }
+function rafLoop() {
+  if (state.dirty) { render(); autoScroll(); }
+  if (bookDirty)   { renderDepth(); }
+  renderTradeFeed();
+  requestAnimationFrame(rafLoop);
+}
 
 // Refresh live column header every second (for time countdown etc.)
 setInterval(() => { state.dirty = true; }, 1000);
@@ -780,6 +1009,10 @@ function applySettings() {
     completedCandles.length = 0;
     liveCandle = null;
     state.centerPrice = null;
+    const list = document.getElementById('sb-trade-list');
+    if (list) list.innerHTML = '';
+    feedRowCount = 0;
+    pendingFeedTrades.length = 0;
   }
 
   reconnectAll();
