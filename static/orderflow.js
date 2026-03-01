@@ -427,7 +427,7 @@ function updateStatus() {
 }
 
 // ── Table DOM refs ─────────────────────────────────────────────────
-let tableCols  = DISPLAY_COLS + 1;  // completed + live
+let tableCols  = DISPLAY_COLS;      // current period is the rightmost column
 let domRows    = [];   // domRows[r] = { priceTd, cells: [{td, buySpan, sep, sellSpan}] }
 let prevPrices = [];   // prev price labels per row
 let prevBuys   = [];   // prevBuys[r][c]
@@ -454,7 +454,7 @@ function buildTable() {
   hRow1.appendChild(th0);
   for (let c = 0; c < tableCols; c++) {
     const th = document.createElement('th');
-    if (c === tableCols - 1) { th.className = 'of-live-th'; th.textContent = 'LIVE'; }
+    if (c === tableCols - 1) th.className = 'of-live-th';
     hRow1.appendChild(th);
     colHeaders.push({ th1: th });
   }
@@ -519,28 +519,26 @@ function render() {
     liveCandle = newCandle(livePts);
   }
 
-  // ── Time axis: always generate fixed time slots from current period backwards ──
-  const periodMs  = state.period * 1000;
-  const timeAxis  = [];
+  // ── Time axis: DISPLAY_COLS slots, last one = current period (live) ──
+  const periodMs = state.period * 1000;
+  const timeAxis = [];
   for (let i = DISPLAY_COLS - 1; i >= 0; i--) {
-    timeAxis.push(livePts - i * periodMs);   // oldest → newest
+    timeAxis.push(livePts - i * periodMs);   // oldest → newest, timeAxis[DISPLAY_COLS-1] = livePts
   }
-  timeAxis.push(livePts);                    // last slot = live
 
-  // Map each time slot to its candle (null if no trades that period)
+  // Map each time slot to its candle; current period maps to liveCandle
   const candleMap = new Map(completedCandles.map(c => [c.startTs, c]));
-  const cols = timeAxis.map((ts, i) =>
-    i === DISPLAY_COLS ? liveCandle : (candleMap.get(ts) || null)
+  const cols = timeAxis.map(ts =>
+    ts === livePts ? liveCandle : (candleMap.get(ts) || null)
   );
 
-  // Update column headers with real times
+  // Update column headers: all show HH:MM + optional delta
   for (let c = 0; c < tableCols; c++) {
     const ts     = timeAxis[c];
-    const isLive = (c === DISPLAY_COLS);
     const candle = cols[c];
     const { th1 } = colHeaders[c];
-    let label = isLive ? 'LIVE' : fmtTime(ts);
-    if (!isLive && candle && candle.open !== null) {
+    let label = fmtTime(ts);
+    if (candle && candle.open !== null) {
       const delta = candle.buyVol - candle.sellVol;
       const sign  = delta >= 0 ? '+' : '';
       label += `\n${sign}${fmtVol(Math.abs(delta))}`;
