@@ -440,6 +440,8 @@ let prevBg     = [];
 let prevPoc    = [];   // prevPoc[r][c] = bool
 let prevHasData= [];   // prevHasData[r][c] = bool (for separator)
 let prevOcClass= [];   // prevOcClass[r][c] = '' | 'of-oc-up' | 'of-oc-down'
+let prevLastRow = -1;  // last-price highlight position
+let prevLastCol = -1;
 let colHeaders = [];   // colHeaders[c] = { th1, th2 }
 let builtCols  = 0;
 
@@ -451,7 +453,7 @@ function buildTable() {
   thead.innerHTML = '';
   tbody.innerHTML = '';
   domRows = []; prevPrices = []; prevBuys = []; prevSells = []; prevBg = []; prevPoc = []; prevHasData = []; prevOcClass = [];
-  colHeaders = []; prevLiveCol = -1;
+  colHeaders = []; prevLiveCol = -1; prevLastRow = -1; prevLastCol = -1;
 
   // Header row 1: time labels
   const hRow1 = thead.insertRow();
@@ -588,6 +590,18 @@ function render() {
       isUp:     candle.close >= candle.open,
     };
   });
+
+  // Highlight last trade price in the live column
+  if (liveCandle && liveCandle.close !== null) {
+    const lastRow = Math.max(0, Math.min(PRICE_ROWS - 1, toRow(liveCandle.close)));
+    if (prevLastRow !== lastRow || prevLastCol !== liveCol) {
+      if (prevLastRow >= 0 && prevLastCol >= 0)
+        domRows[prevLastRow]?.cells[prevLastCol]?.td.classList.remove('of-last-price');
+      domRows[lastRow].cells[liveCol].td.classList.add('of-last-price');
+      prevLastRow = lastRow;
+      prevLastCol = liveCol;
+    }
+  }
 
   // Compute per-column max volume for background intensity (only visible price range)
   const colMaxVol = cols.map(candle => {
