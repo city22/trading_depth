@@ -426,8 +426,12 @@ function updateStatus() {
   }).join('');
 }
 
+// ── Session start ──────────────────────────────────────────────────
+let sessionStartTs = null;   // period ts when session/apply began
+
 // ── Table DOM refs ─────────────────────────────────────────────────
 let tableCols  = DISPLAY_COLS;      // current period is the rightmost column
+let prevLiveCol = -1;               // which col currently has of-live-* class
 let domRows    = [];   // domRows[r] = { priceTd, cells: [{td, buySpan, sep, sellSpan}] }
 let prevPrices = [];   // prev price labels per row
 let prevBuys   = [];   // prevBuys[r][c]
@@ -446,7 +450,7 @@ function buildTable() {
   thead.innerHTML = '';
   tbody.innerHTML = '';
   domRows = []; prevPrices = []; prevBuys = []; prevSells = []; prevBg = []; prevPoc = []; prevHasData = [];
-  colHeaders = [];
+  colHeaders = []; prevLiveCol = -1;
 
   // Header row 1: time labels
   const hRow1 = thead.insertRow();
@@ -454,7 +458,6 @@ function buildTable() {
   hRow1.appendChild(th0);
   for (let c = 0; c < tableCols; c++) {
     const th = document.createElement('th');
-    if (c === tableCols - 1) th.className = 'of-live-th';
     hRow1.appendChild(th);
     colHeaders.push({ th1: th });
   }
@@ -464,7 +467,6 @@ function buildTable() {
   for (let c = 0; c < tableCols; c++) {
     const th = document.createElement('th');
     th.innerHTML = '<span style="color:#3fb950">Buy</span> / <span style="color:#f85149">Sell</span>';
-    if (c === tableCols - 1) th.className = 'of-live-th';
     hRow2.appendChild(th);
     colHeaders[c].th2 = th;
   }
@@ -477,7 +479,6 @@ function buildTable() {
     const cells = [];
     for (let c = 0; c < tableCols; c++) {
       const td = tr.insertCell();
-      if (c === tableCols - 1) td.classList.add('of-live-td');
       const inner = document.createElement('div');
       inner.className = 'of-cell-inner';
       const buySpan  = document.createElement('span'); buySpan.className  = 'of-buy';
@@ -519,11 +520,17 @@ function render() {
     liveCandle = newCandle(livePts);
   }
 
-  // ── Time axis: col 0 = oldest, col DISPLAY_COLS-1 = current period ──
-  const periodMs = state.period * 1000;
+  // ── Time axis: anchored to sessionStartTs, slides when > DISPLAY_COLS periods ──
+  const periodMs     = state.period * 1000;
+  const elapsedPeriods = (livePts - sessionStartTs) / periodMs;
+  const axisStart    = elapsedPeriods < DISPLAY_COLS - 1
+    ? sessionStartTs
+    : livePts - (DISPLAY_COLS - 1) * periodMs;
+  const liveCol      = Math.round((livePts - axisStart) / periodMs);  // 0..DISPLAY_COLS-1
+
   const timeAxis = [];
-  for (let i = DISPLAY_COLS - 1; i >= 0; i--) {
-    timeAxis.push(livePts - i * periodMs);   // oldest → newest (left → right)
+  for (let c = 0; c < DISPLAY_COLS; c++) {
+    timeAxis.push(axisStart + c * periodMs);   // oldest → newest (left → right)
   }
 
   // Map each time slot to its candle; current period maps to liveCandle
@@ -531,6 +538,19 @@ function render() {
   const cols = timeAxis.map(ts =>
     ts === livePts ? liveCandle : (candleMap.get(ts) || null)
   );
+
+  // Update live-column CSS marker dynamically
+  if (prevLiveCol !== liveCol) {
+    if (prevLiveCol >= 0 && prevLiveCol < tableCols) {
+      colHeaders[prevLiveCol].th1.classList.remove('of-live-th');
+      colHeaders[prevLiveCol].th2.classList.remove('of-live-th');
+      domRows.forEach(row => row.cells[prevLiveCol].td.classList.remove('of-live-td'));
+    }
+    colHeaders[liveCol].th1.classList.add('of-live-th');
+    colHeaders[liveCol].th2.classList.add('of-live-th');
+    domRows.forEach(row => row.cells[liveCol].td.classList.add('of-live-td'));
+    prevLiveCol = liveCol;
+  }
 
   // Update column headers: all show HH:MM + optional delta
   for (let c = 0; c < tableCols; c++) {
@@ -677,6 +697,7 @@ function setupBtnGroup(groupId, key) {
       state[key] = parseFloat(btn.dataset.value);
       // Reset candles when precision/period changes
       if (key === 'precision' || key === 'period') {
+        if (key === 'period') sessionStartTs = currentPeriodTs();
         completedCandles.length = 0;
         liveCandle = null;
         state.centerPrice = null;
@@ -702,6 +723,7 @@ function applySettings() {
   state.exchanges = exs;
 
   if (symbolChanged) {
+    sessionStartTs = currentPeriodTs();
     completedCandles.length = 0;
     liveCandle = null;
     state.centerPrice = null;
@@ -714,6 +736,7 @@ function applySettings() {
 
 // ── Init ───────────────────────────────────────────────────────────
 (function init() {
+  sessionStartTs = currentPeriodTs();
   populateExchanges();
   buildTable();
   setupBtnGroup('period-group', 'period');
