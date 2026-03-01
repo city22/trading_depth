@@ -454,7 +454,7 @@ function buildTable() {
   hRow1.appendChild(th0);
   for (let c = 0; c < tableCols; c++) {
     const th = document.createElement('th');
-    if (c === 0) th.className = 'of-live-th';
+    if (c === tableCols - 1) th.className = 'of-live-th';
     hRow1.appendChild(th);
     colHeaders.push({ th1: th });
   }
@@ -464,7 +464,7 @@ function buildTable() {
   for (let c = 0; c < tableCols; c++) {
     const th = document.createElement('th');
     th.innerHTML = '<span style="color:#3fb950">Buy</span> / <span style="color:#f85149">Sell</span>';
-    if (c === 0) th.className = 'of-live-th';
+    if (c === tableCols - 1) th.className = 'of-live-th';
     hRow2.appendChild(th);
     colHeaders[c].th2 = th;
   }
@@ -477,7 +477,7 @@ function buildTable() {
     const cells = [];
     for (let c = 0; c < tableCols; c++) {
       const td = tr.insertCell();
-      if (c === 0) td.classList.add('of-live-td');
+      if (c === tableCols - 1) td.classList.add('of-live-td');
       const inner = document.createElement('div');
       inner.className = 'of-cell-inner';
       const buySpan  = document.createElement('span'); buySpan.className  = 'of-buy';
@@ -519,11 +519,11 @@ function render() {
     liveCandle = newCandle(livePts);
   }
 
-  // ── Time axis: col 0 = current period (live), expands right → oldest ──
+  // ── Time axis: col 0 = oldest, col DISPLAY_COLS-1 = current period ──
   const periodMs = state.period * 1000;
   const timeAxis = [];
-  for (let i = 0; i < DISPLAY_COLS; i++) {
-    timeAxis.push(livePts - i * periodMs);   // newest → oldest (left → right)
+  for (let i = DISPLAY_COLS - 1; i >= 0; i--) {
+    timeAxis.push(livePts - i * periodMs);   // oldest → newest (left → right)
   }
 
   // Map each time slot to its candle; current period maps to liveCandle
