@@ -404,12 +404,13 @@ function connectExchange(exId, symbol) {
 
   activeConns[exId] = sockets;
   sockets.forEach(ws => {
-    ws.onopen  = () => { exStatus[exId] = 'connected';    updateStatus(); };
-    ws.onerror = () => { exStatus[exId] = 'error';        updateStatus(); };
-    ws.onclose = () => {
+    // Use addEventListener so we don't overwrite the exchange's own ws.onopen subscribe handler
+    ws.addEventListener('open',  () => { exStatus[exId] = 'connected';    updateStatus(); });
+    ws.addEventListener('error', () => { exStatus[exId] = 'error';        updateStatus(); });
+    ws.addEventListener('close', () => {
       exStatus[exId] = 'disconnected'; updateStatus();
       setTimeout(() => { if (state.exchanges.includes(exId) && activeConns[exId] === sockets) connectExchange(exId, state.symbol); }, 3000);
-    };
+    });
   });
 }
 
