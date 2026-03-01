@@ -74,12 +74,20 @@
     }
 
     /* Body cells */
-    #of-table tbody td { border-bottom: 1px solid #1c2128; height: 18px; white-space: nowrap; transition: background 0.08s; }
+    #of-table tbody td { border-bottom: 1px solid #1c2128; height: 18px; white-space: nowrap; transition: background 0.08s; position: relative; }
     #of-table td.of-price-td { font-size: 11px; font-weight: 500; color: var(--muted); text-align: right; padding: 0 5px 0 3px; }
     #of-table td.of-price-td.poc-row { color: var(--poc); font-weight: 700; }
 
+    /* OHLC marker on left edge of each data cell */
+    .of-ohlc-m { position: absolute; left: 1px; top: 0; bottom: 0; width: 2px; pointer-events: none; z-index: 1; }
+    .of-ohlc-m.m-hl { background: rgba(140,140,140,0.28); }
+    /* Open tick (upper): light gray */
+    .of-ohlc-m.m-open::after  { content: ''; position: absolute; left: -1px; top: 33%; width: 6px; height: 2px; background: rgba(200,200,200,0.85); }
+    /* Close tick (lower): gold */
+    .of-ohlc-m.m-close::before { content: ''; position: absolute; left: -1px; top: 67%; width: 6px; height: 2px; background: var(--poc); }
+
     /* Data cell inner */
-    .of-cell-inner { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; height: 100%; gap: 2px; min-width: 80px; width: 80px; }
+    .of-cell-inner { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 0 8px; height: 100%; gap: 2px; min-width: 80px; width: 80px; }
     .of-buy  { color: var(--buy);  text-align: right; flex: 1; font-size: 11px; }
     .of-sell { color: var(--sell); text-align: left;  flex: 1; font-size: 11px; }
     .of-sep  { color: #484f58; font-size: 10px; flex-shrink: 0; }

@@ -479,6 +479,11 @@ function buildTable() {
     const cells = [];
     for (let c = 0; c < tableCols; c++) {
       const td = tr.insertCell();
+
+      const ohlcM = document.createElement('div');
+      ohlcM.className = 'of-ohlc-m';
+      td.appendChild(ohlcM);
+
       const inner = document.createElement('div');
       inner.className = 'of-cell-inner';
       const buySpan  = document.createElement('span'); buySpan.className  = 'of-buy';
@@ -486,7 +491,7 @@ function buildTable() {
       const sellSpan = document.createElement('span'); sellSpan.className = 'of-sell';
       inner.append(buySpan, sep, sellSpan);
       td.appendChild(inner);
-      cells.push({ td, buySpan, sep, sellSpan });
+      cells.push({ td, ohlcM, buySpan, sep, sellSpan });
     }
     domRows.push({ priceTd, cells });
     prevPrices.push('');
@@ -566,6 +571,21 @@ function render() {
     if (th1.textContent !== label) th1.textContent = label;
   }
 
+  // Precompute OHLC row indices for each column
+  const toRow = p => {
+    const r = Math.round((centerPrice + (HALF_ROWS - 1) * precision - roundToPrecision(p, precision)) / precision);
+    return Math.max(0, Math.min(PRICE_ROWS - 1, r));
+  };
+  const ohlcInfo = cols.map(candle => {
+    if (!candle || candle.open === null || !isFinite(candle.high) || !isFinite(candle.low)) return null;
+    return {
+      highRow:  toRow(candle.high),
+      lowRow:   toRow(candle.low),
+      openRow:  toRow(candle.open),
+      closeRow: toRow(candle.close),
+    };
+  });
+
   // Compute per-column max volume for background intensity (only visible price range)
   const colMaxVol = cols.map(candle => {
     if (!candle) return 0;
@@ -604,7 +624,7 @@ function render() {
 
       const isPoc = candle?.poc === pk && total > 0;
 
-      const { td, buySpan, sep, sellSpan } = domRows[r].cells[c];
+      const { td, ohlcM, buySpan, sep, sellSpan } = domRows[r].cells[c];
       const hasData = buyTxt !== '' || sellTxt !== '';
 
       if (prevBuys[r][c]    !== buyTxt)  { buySpan.textContent  = buyTxt;  prevBuys[r][c]  = buyTxt; }
@@ -615,6 +635,16 @@ function render() {
         if (isPoc) td.classList.add('of-poc-cell'); else td.classList.remove('of-poc-cell');
         prevPoc[r][c] = isPoc;
       }
+
+      // OHLC marker
+      const oi = ohlcInfo[c];
+      let mClass = 'of-ohlc-m';
+      if (oi) {
+        if (r >= oi.highRow && r <= oi.lowRow) mClass += ' m-hl';
+        if (r === oi.openRow)                  mClass += ' m-open';
+        if (r === oi.closeRow)                 mClass += ' m-close';
+      }
+      if (ohlcM.className !== mClass) ohlcM.className = mClass;
     });
 
     // Price column: highlight if it's the POC of the live candle
